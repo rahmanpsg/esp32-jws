@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv=”refresh” content=”5" />
+    <title>Jadwal Waktu Sholat</title>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bulma@0.9.3/css/bulma.min.css"
+    />
+  </head>
+
+  <body>
+    <div id="app" class="container is-fluid">
+      <section class="section">
+        <div class="container">
+          <h1 class="title">Jadwal Waktu Sholat</h1>
+          <p class="subtitle">ESP32 Panel P10</p>
+        </div>
+      </section>
+      <div class="card">
+        <header class="card-header">
+          <p class="card-header-title">
+            <span class="icon has-text-info">
+              <ion-icon name="person-circle-outline"></ion-icon>
+            </span>
+            Profil
+          </p>
+        </header>
+        <div class="card-content">
+          <div class="content">
+            <div class="columns" v-for="profile in listProfile">
+              <div class="column is-half" v-text="profile.title"></div>
+              <div class="column" v-text="profile.text"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://unpkg.com/vue@next"></script>
+    <script
+      type="module"
+      src="https://unpkg.com/ionicons@5.5.2/dist/ionicons/ionicons.esm.js"
+    ></script>
+    <script
+      nomodule
+      src="https://unpkg.com/ionicons@5.5.2/dist/ionicons/ionicons.js"
+    ></script>
+  </body>
+  <script>
+    const { ref, createApp } = Vue;
+    createApp({
+      setup() {
+        const listProfile = ref([
+          {
+            title: "Nama",
+            text: "Abd Rahman",
+          },
+          {
+            title: "Judul",
+            text: "Abd Rahman",
+          },
+          {
+            title: "Pembimbing 1",
+            text: "Abd Rahman",
+          },
+        ]);
+
+        return {
+          listProfile,
+        };
+      },
+    }).mount("#app");
+  </script>
+</html>
