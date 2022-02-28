@@ -11,7 +11,6 @@
 #include "WebPage.h"
 #include "fonts/HoboStd12.h"
 #include "fonts/HoboStd16.h"
-#include "fonts/Calibri10.h"
 #include "fonts/CooperBlack10.h"
 #include "fonts/ElektronMart5x6.h"
 #include "fonts/ElektronMart6x16.h"
@@ -31,34 +30,56 @@ struct Config
   String listInformasi;
 };
 
+struct Iqomah
+{
+  int subuh;
+  int zuhur;
+  int asar;
+  int magrib;
+  int isya;
+};
+
 const char *fileConfig = "/config.json";
 Config config;
 Config configShow;
 
+const char *fileIqomah = "/iqomah.json";
+Iqomah iqomah;
+
 bool updateInformasi;
+bool retInformasi = true;
+int indexInformasi = 0;
 
 const char *ntpServer = "pool.ntp.org";
 const long gmtOffset_sec = 28800; // GMT +8
 const int daylightOffset_sec = 3600;
 
-bool waktuLokal = false;
-
 struct tm timeinfo;
 
-char jam[3];
-char menit[3];
-char detik[3];
+struct Waktu
+{
+  int tahun;
+  int bulan;
+  int tanggal;
+  int jam;
+  int menit;
+  int detik;
+};
+
+Waktu waktu;
+Waktu waktuIqomah;
 
 double times[sizeof(TimeName) / sizeof(char *)];
-int indexTime[] = {0, 2, 3, 5, 6, 7};
+int indexTime[] = {0, 1, 2, 3, 5, 6, 7};
 int indexTimeActive = 0;
-int tempTimeActive = 0;
+
+// 0 = tampil tanggal; 1 = tampil waktu sholat; 2 = tampil adzan; 3 = tampil iqomah;
+int indexCetakTampil = 0;
 
 #define INTERVAL_CETAK_WAKTU_SHOLAT 5000
-unsigned long time_now = 0;
-unsigned long time_now2 = 0;
-
-int tahun, bulan, tanggal;
+unsigned long time_cetak_waktu = 0;
+unsigned long time_cetak_informasi = 0;
+unsigned long time_iqomah = 0;
 
 // Fire up the DMD library as dmd
 #define KOLOM 3
@@ -72,13 +93,16 @@ hw_timer_t *timer = NULL;
 
 void initLED(boolean first);
 void initWaktuSholat();
-void loadConfig(const char *fileConfig, Config &config);
-void saveConfig(JsonObject json);
+void loadFile();
+void saveFile(const char *filePath, JsonObject json);
+void setWaktu(int yr, int month, int mday, int hr, int minute, int sec, int isDst);
 void updateWaktu();
 void cetakWaktu();
 void cetakTanggal();
 void cetakJamSholat();
 void cetakInfo();
+void cetakAdzan();
+void cetakIqomah();
 void IRAM_ATTR triggerScan();
 void textCenter(int y, char *Msg);
 
@@ -86,6 +110,7 @@ void handleGetIndex(AsyncWebServerRequest *request);
 void handlePostWaktu(AsyncWebServerRequest *request);
 void handleGetPostLokasi(AsyncWebServerRequest *request);
 void handleGetPostInformasi(AsyncWebServerRequest *request);
+void handleGetPostIqomah(AsyncWebServerRequest *request);
 
 void setup(void)
 {
@@ -100,7 +125,7 @@ void setup(void)
     return;
   }
 
-  loadConfig(fileConfig, config);
+  loadFile();
 
   // connect to WiFi
   Serial.printf("Menghubungkan ke %s ...", ssid);
@@ -121,6 +146,7 @@ void setup(void)
   server.on("/waktu", handlePostWaktu);
   server.on("/lokasi", handleGetPostLokasi);
   server.on("/informasi", handleGetPostInformasi);
+  server.on("/iqomah", handleGetPostIqomah);
 
   // Start server
   DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
@@ -138,9 +164,13 @@ void setup(void)
 
 void loop(void)
 {
+  updateWaktu();
   cetakWaktu();
   cetakJamSholat();
+  cetakTanggal();
   cetakInfo();
+  cetakAdzan();
+  cetakIqomah();
 }
 
 // ====================================== WEB SERVER ===================//
@@ -153,6 +183,16 @@ void handlePostWaktu(AsyncWebServerRequest *request)
 {
   AsyncResponseStream *response = request->beginResponseStream("application/json");
 
+  waktu.tahun = request->getParam("tahun", true)->value().toInt();
+  waktu.bulan = request->getParam("bulan", true)->value().toInt();
+  waktu.tanggal = request->getParam("tanggal", true)->value().toInt();
+  waktu.jam = request->getParam("jam", true)->value().toInt();
+  waktu.menit = request->getParam("menit", true)->value().toInt();
+
+  timerDetachInterrupt(timer);
+
+  setWaktu(waktu.tahun, waktu.bulan, waktu.tanggal, waktu.jam, waktu.menit, 0, 0);
+
   StaticJsonDocument<512> json;
 
   json["error"] = false;
@@ -162,6 +202,10 @@ void handlePostWaktu(AsyncWebServerRequest *request)
   json.clear();
 
   request->send(response);
+
+  initWaktuSholat();
+  delay(500);
+  initLED(false);
 }
 
 void handleGetPostLokasi(AsyncWebServerRequest *request)
@@ -187,7 +231,7 @@ void handleGetPostLokasi(AsyncWebServerRequest *request)
     json["zonaWaktu"] = config.zonaWaktu;
     json["listInformasi"] = config.listInformasi;
 
-    saveConfig(json.as<JsonObject>());
+    saveFile(fileConfig, json.as<JsonObject>());
   }
 
   serializeJson(json, *response);
@@ -216,8 +260,45 @@ void handleGetPostInformasi(AsyncWebServerRequest *request)
     json["longitude"] = config.longitude;
     json["zonaWaktu"] = config.zonaWaktu;
     json["listInformasi"] = config.listInformasi;
-    saveConfig(json.as<JsonObject>());
+    saveFile(fileConfig, json.as<JsonObject>());
     updateInformasi = true;
+  }
+
+  // json.shrinkToFit();
+  serializeJson(json, *response);
+  json.clear();
+
+  request->send(response);
+}
+
+void handleGetPostIqomah(AsyncWebServerRequest *request)
+{
+  AsyncResponseStream *response = request->beginResponseStream("application/json");
+
+  StaticJsonDocument<512> json;
+
+  if (request->method() == HTTP_GET)
+  {
+    json["subuh"] = iqomah.subuh;
+    json["zuhur"] = iqomah.zuhur;
+    json["asar"] = iqomah.asar;
+    json["magrib"] = iqomah.magrib;
+    json["isya"] = iqomah.isya;
+  }
+  else if (request->method() == HTTP_POST)
+  {
+    iqomah.subuh = request->getParam("subuh", true)->value().toInt();
+    iqomah.zuhur = request->getParam("zuhur", true)->value().toInt();
+    iqomah.asar = request->getParam("asar", true)->value().toInt();
+    iqomah.magrib = request->getParam("magrib", true)->value().toInt();
+    iqomah.isya = request->getParam("isya", true)->value().toInt();
+
+    json["subuh"] = iqomah.subuh;
+    json["zuhur"] = iqomah.zuhur;
+    json["asar"] = iqomah.asar;
+    json["magrib"] = iqomah.magrib;
+    json["isya"] = iqomah.isya;
+    saveFile(fileIqomah, json.as<JsonObject>());
   }
 
   // json.shrinkToFit();
@@ -229,8 +310,10 @@ void handleGetPostInformasi(AsyncWebServerRequest *request)
 
 // ===================================================================== //
 
-void loadConfig(const char *fileConfig, Config &config)
+// Load File Config dan Iqomah
+void loadFile()
 {
+  // Load File Config
   File configFile = SPIFFS.open(fileConfig);
 
   if (!configFile)
@@ -239,12 +322,12 @@ void loadConfig(const char *fileConfig, Config &config)
     return;
   }
 
-  size_t size = configFile.size();
-  std::unique_ptr<char[]> buf(new char[size]);
-  configFile.readBytes(buf.get(), size);
+  size_t sizeConfig = configFile.size();
+  std::unique_ptr<char[]> bufConfig(new char[sizeConfig]);
+  configFile.readBytes(bufConfig.get(), sizeConfig);
 
   DynamicJsonDocument doc(1024);
-  DeserializationError error = deserializeJson(doc, buf.get());
+  DeserializationError error = deserializeJson(doc, bufConfig.get());
 
   if (error)
   {
@@ -252,7 +335,7 @@ void loadConfig(const char *fileConfig, Config &config)
     return;
   }
 
-  Serial.println("Load data from config...");
+  Serial.println("Load data file config...");
 
   config.latitude = doc["latitude"];
   config.longitude = doc["longitude"];
@@ -260,12 +343,45 @@ void loadConfig(const char *fileConfig, Config &config)
   config.listInformasi = doc["listInformasi"].as<String>();
 
   configFile.close();
+  doc.clear();
+
+  // Load File Iqomah
+  File iqomahFile = SPIFFS.open(fileIqomah);
+
+  if (!iqomahFile)
+  {
+    Serial.println("Gagal membuka file iqomah");
+    return;
+  }
+
+  size_t sizeIqomah = iqomahFile.size();
+  std::unique_ptr<char[]> bufIqomah(new char[sizeIqomah]);
+  iqomahFile.readBytes(bufIqomah.get(), sizeIqomah);
+
+  error = deserializeJson(doc, bufIqomah.get());
+
+  if (error)
+  {
+    Serial.println("Gagal parse file iqomah");
+    return;
+  }
+
+  Serial.println("Load data file iqomah...");
+
+  iqomah.subuh = doc["subuh"];
+  iqomah.zuhur = doc["zuhur"];
+  iqomah.asar = doc["asar"];
+  iqomah.magrib = doc["magrib"];
+  iqomah.isya = doc["isya"];
+
+  configFile.close();
+  doc.clear();
 }
 
-void saveConfig(JsonObject json)
+void saveFile(const char *filePath, JsonObject json)
 {
   timerDetachInterrupt(timer);
-  File configFile = SPIFFS.open(fileConfig, "w");
+  File configFile = SPIFFS.open(filePath, "w");
 
   if (!configFile)
   {
@@ -285,7 +401,7 @@ void saveConfig(JsonObject json)
   initWaktuSholat();
   delay(500);
   initLED(false);
-  time_now = 0;
+  time_cetak_waktu = 0;
 }
 
 void IRAM_ATTR triggerScan()
@@ -318,61 +434,25 @@ void initWaktuSholat()
   set_fajr_angle(20);
   set_isha_angle(18);
 
-  get_prayer_times(tahun, bulan, tanggal, config.latitude, config.longitude, config.zonaWaktu, times);
-
-  double currTime = timeinfo.tm_hour + timeinfo.tm_min / 60.0;
-
-  for (indexTimeActive = 0; indexTimeActive < sizeof(times) / sizeof(double); indexTimeActive++)
-  {
-    if (times[indexTimeActive] >= currTime)
-      break;
-  }
-
-  if ((times[indexTimeActive] - currTime) < 0)
-  {
-    indexTimeActive = 0;
-  }
-
-  tempTimeActive = indexTimeActive;
-
-  if (indexTimeActive == 1 || indexTimeActive == 4)
-  {
-    tempTimeActive++;
-  }
-  else if (indexTimeActive == 7)
-  {
-    tempTimeActive = 0;
-  }
-
-  for (size_t i = 0; i < (sizeof(indexTime) / sizeof(int *)); i++)
-  {
-    if (tempTimeActive == indexTime[i])
-    {
-      indexTimeActive = i;
-    }
-  }
+  get_prayer_times(waktu.tahun, waktu.bulan, waktu.tanggal, config.latitude, config.longitude, config.zonaWaktu, times);
 }
 
 /*--------------------------------------------------------------------------------------
-  Fungsi untuk menampilkan waktu NTP ke LED
+  Fungsi untuk menampilkan waktu ke LED
 --------------------------------------------------------------------------------------*/
 void cetakWaktu()
 {
-  int prevMenit = atoi(menit);
-  updateWaktu();
-
-  if (prevMenit != atoi(menit))
-  {
-    dmd.selectFont(HoboStd12);
-    dmd.drawFilledBox(0, -3, ((7 * 32 - 13) / 32) * DMD_PIXELS_ACROSS, 7, GRAPHICS_INVERSE);
-  }
-
   dmd.selectFont(ElektronMart6x16);
+
+  char jam[3], menit[3];
+
+  sprintf(jam, "%02d", waktu.jam);
+  sprintf(menit, "%02d", waktu.menit);
 
   dmd.drawString(0, 0, jam, 3, GRAPHICS_NORMAL);
 
   dmd.selectFont(HoboStd16);
-  dmd.drawChar(14, -2, ':', atoi(detik) % 2 == 0 ? GRAPHICS_OR : GRAPHICS_NOR);
+  dmd.drawChar(14, -2, ':', waktu.detik % 2 == 0 ? GRAPHICS_OR : GRAPHICS_NOR);
 
   dmd.selectFont(ElektronMart6x16);
   dmd.drawString(19, 0, menit, 2, GRAPHICS_NORMAL);
@@ -380,46 +460,43 @@ void cetakWaktu()
 
 void cetakTanggal()
 {
-  if (indexTimeActive != -1)
+  if (indexCetakTampil != 0)
     return;
 
   dmd.selectFont(ElektronMart5x6);
 
-  char teks[10];
-  sprintf(teks, "%d-%d-%d", tanggal, bulan, tahun);
+  char teks[11];
+  sprintf(teks, "%02d-%02d-%d", waktu.tanggal, waktu.bulan, waktu.tahun);
 
   textCenter(0, teks);
-  if (millis() >= time_now + INTERVAL_CETAK_WAKTU_SHOLAT * 2)
+  if (millis() >= time_cetak_waktu + INTERVAL_CETAK_WAKTU_SHOLAT * 2)
   {
-    time_now += INTERVAL_CETAK_WAKTU_SHOLAT;
-    indexTimeActive++;
+    time_cetak_waktu += INTERVAL_CETAK_WAKTU_SHOLAT;
+    indexCetakTampil = 1;
   }
 }
 
 void cetakJamSholat()
 {
-  int hh, mm;
-  char waktu[5];
-
-  if (indexTimeActive == -1)
+  if (indexCetakTampil != 1)
     return;
+
+  int hh, mm;
 
   int index = indexTime[indexTimeActive];
 
-  if (millis() >= time_now + INTERVAL_CETAK_WAKTU_SHOLAT)
+  if (millis() >= time_cetak_waktu + INTERVAL_CETAK_WAKTU_SHOLAT)
   {
-
-    time_now += INTERVAL_CETAK_WAKTU_SHOLAT;
+    time_cetak_waktu += INTERVAL_CETAK_WAKTU_SHOLAT;
     get_float_time_parts(times[index], hh, mm);
-    sprintf(waktu, "%02d:%02d", hh, mm);
 
     dmd.selectFont(ElektronMart5x6);
 
     // clear
     dmd.drawFilledBox(32, 0, 3 * DMD_PIXELS_ACROSS, 7, GRAPHICS_INVERSE);
 
-    char teks[strlen(TimeName[index]) + strlen(waktu)];
-    sprintf(teks, "%s %s", TimeName[index], waktu);
+    char teks[strlen(TimeName[index]) + 5];
+    sprintf(teks, "%s %02d:%02d", TimeName[index], hh, mm);
 
     textCenter(0, teks);
 
@@ -430,7 +507,8 @@ void cetakJamSholat()
     }
     else
     {
-      indexTimeActive = -1;
+      indexTimeActive = 0;
+      indexCetakTampil = 0;
       // clear
       dmd.drawFilledBox(32, 0, 3 * DMD_PIXELS_ACROSS, 7, GRAPHICS_INVERSE);
     }
@@ -439,58 +517,165 @@ void cetakJamSholat()
 
 void cetakInfo()
 {
-  Config _config = config;
-  DynamicJsonDocument jsonInformasi(512);
-  deserializeJson(jsonInformasi, _config.listInformasi);
-  jsonInformasi.shrinkToFit();
+  StaticJsonDocument<512> jsonInformasi;
+  deserializeJson(jsonInformasi, config.listInformasi);
 
-  for (size_t i = 0; i < jsonInformasi.size(); i++)
+  dmd.selectFont(CooperBlack10);
+  const char *MSG = jsonInformasi[indexInformasi];
+
+  if (retInformasi)
   {
+    dmd.drawMarquee(MSG, strlen(MSG), (DMD_PIXELS_ACROSS * KOLOM), 8);
+    retInformasi = false;
+  }
+
+  if (!retInformasi && millis() >= time_cetak_informasi + 70)
+  {
+    time_cetak_informasi += 70;
+
     dmd.selectFont(CooperBlack10);
-    const char *MSG = jsonInformasi[i];
-    dmd.drawMarquee(MSG, strlen(MSG), (32 * KOLOM) + 0, 8);
-    boolean ret = false;
-    long start = millis();
+    retInformasi = dmd.stepSplitMarquee(9, 15, 39);
 
-    while (!ret)
+    if (retInformasi)
+      if (indexInformasi < jsonInformasi.size() - 1)
+        indexInformasi++;
+      else
+        indexInformasi = 0;
+  }
+
+  if (updateInformasi)
+  {
+    indexInformasi = 0;
+    retInformasi = true;
+    dmd.clearScreen(true);
+  }
+
+  updateInformasi = false;
+
+  jsonInformasi.clear();
+}
+
+void cetakAdzan()
+{
+  if (indexCetakTampil != 2)
+    return;
+
+  int hh, mm;
+
+  get_float_time_parts(times[indexTimeActive], hh, mm);
+
+  char teks[strlen(TimeName[indexTimeActive]) + 5];
+  sprintf(teks, "%s %02d:%02d", TimeName[indexTimeActive], hh, mm);
+
+  dmd.selectFont(ElektronMart5x6);
+
+  if (waktu.detik % 2 != 0)
+    dmd.drawFilledBox(32, 0, 3 * DMD_PIXELS_ACROSS, 7, GRAPHICS_INVERSE);
+  else
+    textCenter(0, teks);
+
+  // berali ke iqomah setelah 1 menit
+  if (waktu.menit > mm)
+  {
+    dmd.drawFilledBox(32, 0, 3 * DMD_PIXELS_ACROSS, 7, GRAPHICS_INVERSE);
+
+    indexCetakTampil = 3;
+    time_iqomah = millis();
+    if (indexTimeActive == 0)
+      waktuIqomah.menit = iqomah.subuh;
+    else if (indexTimeActive == 2)
+      waktuIqomah.menit = iqomah.zuhur;
+    else if (indexTimeActive == 3)
+      waktuIqomah.menit = iqomah.asar;
+    else if (indexTimeActive == 5)
+      waktuIqomah.menit = iqomah.magrib;
+    else if (indexTimeActive == 6)
+      waktuIqomah.menit = iqomah.isya;
+  }
+}
+
+void cetakIqomah()
+{
+  if (indexCetakTampil != 3)
+    return;
+
+  if (millis() >= time_iqomah + 1000)
+  {
+    time_iqomah += 1000;
+
+    char teks[13];
+    sprintf(teks, "IQOMAH %02d:%02d", waktuIqomah.menit, waktuIqomah.detik);
+
+    dmd.selectFont(ElektronMart5x6);
+    textCenter(0, teks);
+
+    if (waktuIqomah.menit == 0 && waktuIqomah.detik == 0)
     {
-      if ((start + 70) < millis())
-      {
-        dmd.selectFont(CooperBlack10);
-        ret = dmd.stepSplitMarquee(9, 15, 39);
-
-        start = millis();
-      }
-
-      if (updateInformasi)
-      {
-        ret = true;
-        dmd.clearScreen(true);
-      }
-
-      cetakWaktu();
-      cetakTanggal();
-      cetakJamSholat();
+      indexCetakTampil = 1;
+    }
+    else if (waktuIqomah.detik == 0)
+    {
+      waktuIqomah.detik = 59;
+      waktuIqomah.menit--;
+    }
+    else
+    {
+      waktuIqomah.detik--;
     }
   }
-  updateInformasi = false;
+}
+
+void setWaktu(int yr, int month, int mday, int hr, int minute, int sec, int isDst)
+{
+  struct tm tm;
+
+  tm.tm_year = yr - 1900;
+  tm.tm_mon = month - 1;
+  tm.tm_mday = mday;
+  tm.tm_hour = hr;
+  tm.tm_min = minute;
+  tm.tm_sec = sec;
+  tm.tm_isdst = isDst; // 1 or 0
+  time_t t = mktime(&tm);
+  Serial.printf("Set Waktu: %s", asctime(&tm));
+  struct timeval now = {.tv_sec = t};
+  settimeofday(&now, NULL);
 }
 
 void updateWaktu()
 {
   if (!getLocalTime(&timeinfo))
   {
-    Serial.println("Gagal mengambil waktu dari server");
+    Serial.println("Gagal mengambil waktu");
     return;
   }
 
-  tahun = timeinfo.tm_year + 1900;
-  bulan = timeinfo.tm_mon + 1;
-  tanggal = timeinfo.tm_mday;
+  waktu.tahun = timeinfo.tm_year + 1900;
+  waktu.bulan = timeinfo.tm_mon + 1;
+  waktu.tanggal = timeinfo.tm_mday;
 
-  strftime(jam, 3, "%H", &timeinfo);
-  strftime(menit, 3, "%M", &timeinfo);
-  strftime(detik, 3, "%S", &timeinfo);
+  waktu.jam = timeinfo.tm_hour;
+  waktu.menit = timeinfo.tm_min;
+  waktu.detik = timeinfo.tm_sec;
+
+  // periksa jika masuk waktu sholat
+  int indexWaktuSholat[] = {0, 2, 3, 5, 6};
+  if (waktu.detik == 0)
+  {
+    for (size_t i = 0; i < sizeof(indexWaktuSholat) / sizeof(int *); i++)
+    {
+      char tmp[10];
+      int hh, mm;
+      get_float_time_parts(times[indexWaktuSholat[i]], hh, mm);
+
+      if (waktu.jam == hh && waktu.menit == mm)
+      {
+        indexCetakTampil = 2;
+        indexTimeActive = indexWaktuSholat[i];
+        break;
+      }
+    }
+  }
 }
 
 void textCenter(int y, char *Msg)
@@ -501,7 +686,7 @@ void textCenter(int y, char *Msg)
     width += dmd.charWidth(Msg[i]);
   }
 
-  int center = int(((31 * (KOLOM + 1)) - width) / 2);
+  int center = int(((30 * (KOLOM + 1)) - width) / 2);
 
   dmd.drawString(center, y, Msg, strlen(Msg), GRAPHICS_NORMAL);
 }

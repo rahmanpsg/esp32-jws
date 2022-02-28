@@ -48,7 +48,61 @@ const char webpage[] PROGMEM =
           </div>
         </div>
 
-       
+        <div class="column is-full">
+          <div class="card">
+            <header class="card-header">
+              <p class="card-header-title">
+                <span class="icon is-large has-text-info">
+                  <ion-icon name="stopwatch" size="large"></ion-icon>
+                </span>
+                Pengaturan Waktu
+              </p>
+              <div class="card-header-icon">
+                <button
+                  class="button is-info"
+                  @click="postWaktu"
+                  :disabled="!tanggal || !jam"
+                >
+                  <span class="icon">
+                    <ion-icon name="save"></ion-icon>
+                  </span>
+                </button>
+              </div>
+            </header>
+            <div class="card-content">
+              <div class="content">
+                <div class="columns">
+                  <div class="column">
+                    <div class="field">
+                      <label class="label">Tanggal</label>
+                      <div class="control">
+                        <input
+                          v-model="tanggal"
+                          class="input"
+                          type="date"
+                          placeholder="Masukkan Tanggal"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  <div class="column">
+                    <div class="field">
+                      <label class="label">Jam</label>
+                      <div class="control">
+                        <input
+                          v-model="jam"
+                          class="input"
+                          type="time"
+                          placeholder="Masukkan Jam"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
 
         <div class="column is-full">
           <div class="card">
@@ -71,28 +125,43 @@ const char webpage[] PROGMEM =
               <div class="content">
                 <div class="columns">
                   <div class="column">
-                    <input
-                      v-model="latitude"
-                      class="input"
-                      type="number"
-                      placeholder="Latitude"
-                    />
+                    <div class="field">
+                      <label class="label">Latitude</label>
+                      <div class="control">
+                        <input
+                          v-model="latitude"
+                          class="input"
+                          type="number"
+                          placeholder="Masukkan Latitude"
+                        />
+                      </div>
+                    </div>
                   </div>
                   <div class="column">
-                    <input
-                      v-model="longitude"
-                      class="input"
-                      type="number"
-                      placeholder="Longitude"
-                    />
+                    <div class="field">
+                      <label class="label">Longitude</label>
+                      <div class="control">
+                        <input
+                          v-model="longitude"
+                          class="input"
+                          type="number"
+                          placeholder="Masukkan Longitude"
+                        />
+                      </div>
+                    </div>
                   </div>
                   <div class="column">
-                    <input
-                      v-model="zonaWaktu"
-                      class="input"
-                      type="number"
-                      placeholder="Zona Waktu"
-                    />
+                    <div class="field">
+                      <label class="label">Zona Waktu</label>
+                      <div class="control">
+                        <input
+                          v-model="zonaWaktu"
+                          class="input"
+                          type="number"
+                          placeholder="Masukkan Zona Waktu"
+                        />
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -129,6 +198,12 @@ const char webpage[] PROGMEM =
                     />
                   </div>
                   <div class="column is-2">
+                    <button class="button" @click="hapusInformasi(i)">
+                      <span class="icon">
+                        <ion-icon name="close"></ion-icon>
+                      </span>
+                    </button>
+                    &nbsp;
                     <button
                       v-if="i == listInformasi.length -1"
                       class="button"
@@ -138,11 +213,45 @@ const char webpage[] PROGMEM =
                         <ion-icon name="add"></ion-icon>
                       </span>
                     </button>
-                    <button v-else class="button" @click="hapusInformasi(i)">
-                      <span class="icon">
-                        <ion-icon name="close"></ion-icon>
-                      </span>
-                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="column is-full">
+        <div class="card">
+          <header class="card-header">
+            <p class="card-header-title">
+              <span class="icon is-large has-text-info">
+                <ion-icon name="volume-medium" size="large"></ion-icon>
+              </span>
+              Pengaturan Iqomah
+            </p>
+            <div class="card-header-icon">
+              <button class="button is-info" @click="postIqomah">
+                <span class="icon">
+                  <ion-icon name="save"></ion-icon>
+                </span>
+              </button>
+            </div>
+          </header>
+          <div class="card-content">
+            <div class="content">
+              <div class="columns">
+                <div v-for="(waktu, iqo) in iqomah" class="column">
+                  <div class="field">
+                    <label class="label">{{iqo.toUpperCase()}}</label>
+                    <div class="control">
+                      <input
+                        v-model="iqomah[iqo]"
+                        class="input"
+                        type="number"
+                        placeholder="Menit"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -189,12 +298,12 @@ const char webpage[] PROGMEM =
         const longitude = ref(null);
         const zonaWaktu = ref(null);
         const listInformasi = ref([]);
+        const iqomah = ref({});
         const response = ref({
           error: false,
           message: null,
         });
 
-        
         const url = new URL(document.URL);
 
         const listProfile = ref([
@@ -235,19 +344,27 @@ const char webpage[] PROGMEM =
           setTimeout(() => modal.classList.remove("is-active"), 2000);
         }
 
+        const post = async (endpoint, formData) => {
+          const post = await fetch(`${url.href}${endpoint}`, {
+            method: "POST",
+            body: formData,
+          });
+          const res = await post.json();
+          response.value = res;
+          openModal();
+        };
+
         const postWaktu = async () => {
-          console.log(tanggal.value);
-          console.log(jam.value);
-          // const formData = new FormData();
-          // formData.append("tanggal", tanggal.value);
-          // formData.append("jam", jam.value);
-          // const post = await fetch(`${url.href}waktu`, {
-          //   method: "POST",
-          //   body: formData,
-          // });
-          // const res = await post.json();
-          // response.value = res;
-          // openModal();
+          const date = new Date(`${tanggal.value} ${jam.value}`);
+
+          const formData = new FormData();
+          formData.append("tahun", date.getFullYear());
+          formData.append("bulan", date.getMonth() + 1);
+          formData.append("tanggal", date.getDate());
+          formData.append("jam", date.getHours());
+          formData.append("menit", date.getMinutes());
+
+          post("waktu", formData);
         };
 
         const getLokasi = async () => {
@@ -266,16 +383,7 @@ const char webpage[] PROGMEM =
           formData.append("longitude", longitude.value);
           formData.append("zonaWaktu", zonaWaktu.value);
 
-          const post = await fetch(`${url.href}lokasi`, {
-            method: "POST",
-            body: formData,
-          });
-
-          const res = await post.json();
-
-          response.value = res;
-
-          openModal();
+          post("lokasi", formData);
         };
 
         const getListInformasi = async () => {
@@ -290,21 +398,31 @@ const char webpage[] PROGMEM =
           const formData = new FormData();
           formData.append("listInformasi", JSON.stringify(listInformasi.value));
 
-          const post = await fetch(`${url.href}informasi`, {
-            method: "POST",
-            body: formData,
-          });
+          post("informasi", formData);
+        };
 
-          const res = await post.json();
+        const getIqomah = async () => {
+          const get = await fetch(`${url.href}iqomah`);
 
-          response.value = res;
+          const res = await get.json();
 
-          openModal();
+          iqomah.value = res;
+        };
+
+        const postIqomah = async () => {
+          const formData = new FormData();
+
+          for (const key in iqomah.value) {
+            formData.append(key, iqomah.value[key]);
+          }
+
+          post("iqomah", formData);
         };
 
         onMounted(() => {
           getLokasi();
           getListInformasi();
+          getIqomah();
         });
 
         const tambahInformasi = () => {
@@ -322,11 +440,13 @@ const char webpage[] PROGMEM =
           latitude,
           longitude,
           zonaWaktu,
+          iqomah,
           listProfile,
           listInformasi,
           postWaktu,
           postLokasi,
           postListInformasi,
+          postIqomah,
           tambahInformasi,
           hapusInformasi,
           response,
@@ -335,6 +455,7 @@ const char webpage[] PROGMEM =
     }).mount("#app");
   </script>
 </html>
+
 
 
 )=====";
