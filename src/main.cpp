@@ -15,10 +15,17 @@
 #include "fonts/ElektronMart5x6.h"
 #include "fonts/ElektronMart6x16.h"
 
+#include "EasyBuzzer.h"
+
+unsigned int frequency = 1;
+unsigned int onDuration = 50;
+unsigned int offDuration = 100;
+unsigned int beeps = 2;
+
 #define SPIFFS LITTLEFS
 
 const char *ssid = "HUAWEI nova 5T";
-const char *password = "leppangang1";
+const char *password = "leppangang";
 
 AsyncWebServer server(80);
 
@@ -51,7 +58,7 @@ bool retInformasi = true;
 int indexInformasi = 0;
 
 const char *ntpServer = "pool.ntp.org";
-const long gmtOffset_sec = 28800; // GMT +8
+const long gmtOffset_sec = 25200; // GMT +8
 const int daylightOffset_sec = 3600;
 
 struct tm timeinfo;
@@ -171,6 +178,8 @@ void loop(void)
   cetakInfo();
   cetakAdzan();
   cetakIqomah();
+
+  EasyBuzzer.update();
 }
 
 // ====================================== WEB SERVER ===================//
@@ -191,7 +200,7 @@ void handlePostWaktu(AsyncWebServerRequest *request)
 
   timerDetachInterrupt(timer);
 
-  setWaktu(waktu.tahun, waktu.bulan, waktu.tanggal, waktu.jam, waktu.menit, 0, 0);
+  setWaktu(waktu.tahun, waktu.bulan, waktu.tanggal, waktu.jam, waktu.menit, 0, 1);
 
   StaticJsonDocument<512> json;
 
@@ -609,6 +618,25 @@ void cetakIqomah()
     dmd.selectFont(ElektronMart5x6);
     textCenter(0, teks);
 
+    if (waktuIqomah.menit == 0 && waktuIqomah.detik == 15)
+    {
+      EasyBuzzer.beep(
+          1,           // Frequency in hertz(HZ).
+          onDuration,  // On Duration in milliseconds(ms).
+          offDuration, // Off Duration in milliseconds(ms).
+          beeps,       // The number of beeps per cycle.
+          500,         // Pause duration.
+          20           // The number of cycle.
+      );
+    }
+    if (waktuIqomah.menit == 0 && waktuIqomah.detik == 5)
+    {
+      EasyBuzzer.singleBeep(
+          1,   // Frequency in hertz(HZ).
+          5000 // Duration of the beep in milliseconds(ms).
+      );
+    }
+
     if (waktuIqomah.menit == 0 && waktuIqomah.detik == 0)
     {
       indexCetakTampil = 1;
@@ -664,7 +692,6 @@ void updateWaktu()
   {
     for (size_t i = 0; i < sizeof(indexWaktuSholat) / sizeof(int *); i++)
     {
-      char tmp[10];
       int hh, mm;
       get_float_time_parts(times[indexWaktuSholat[i]], hh, mm);
 
